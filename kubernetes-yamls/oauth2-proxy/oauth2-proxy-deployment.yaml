@@ -1,0 +1,109 @@
+# oauth2-proxy-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oauth2-proxy
+  # 命名空間確定後，以下所列的元件都需部署在相同的命名空間中
+  # Deployment、ConfigMap、Secret、Service 與 Ingress
+  namespace: kube-system
+  labels:
+    app_name: oauth2-proxy
+spec:
+  selector:
+    matchLabels:
+      app_name: oauth2-proxy
+  template:
+    metadata:
+      labels:
+        app_name: oauth2-proxy
+    spec:
+      containers:
+        - name: oauth-proxy
+          # 若需要升級 oauth2-proxy，針對 Deployment 重新部署即可
+          image: quay.io/oauth2-proxy/oauth2-proxy:latest
+          imagePullPolicy: IfNotPresent
+          # oauth2-proxy 設定參數
+          args:
+            - --http-address=$(LISTEN_ADDR)
+            - --upstream=$(UPSTREAM_ADDR)
+            # 若要使用不同的 Identity Provider，請在這邊修改
+            - --provider=github
+            # 目前已知若將此選項設為 true 會導致服務無法正常驗證
+            - --cookie-secure=false
+            - --email-domain=*
+            # 將 Ingress 的 Path Prefix 帶進來
+            # 若未使用 Ingress Path Prefix，請將這個參數移除或註解掉
+            - --proxy-prefix=$(PROXY_PREFIX)
+            # 由於範例是執行於 nginx-ingress，因此此選項要設為 true
+            - --reverse-proxy=true
+            # oauth2-proxy 的樣式檔等不需要登入
+            - --skip-auth-regex=/oauth2/static($|/)(.*)
+          env:
+            - name: LISTEN_ADDR
+              valueFrom:
+                configMapKeyRef:
+                  name: oauth2-proxy-configs
+                  key: oauth2Proxy.listenAddr
+            # 指定服務位址與連接埠
+            - name: UPSTREAM_ADDR
+              valueFrom:
+                configMapKeyRef:
+                  name: oauth2-proxy-configs
+                  key: oauth2Proxy.upstreamAddr
+            # Identity Provider Client ID
+            - name: OAUTH2_PROXY_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: oauth2-proxy-secrets
+                  key: github.clientId
+            # Identity Provider Client Secret
+            - name: OAUTH2_PROXY_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: oauth2-proxy-secrets
+                  key: github.clientSecret
+            # 照這裡提供的指令生一個
+            # https://oauth2-proxy.github.io/oauth2-proxy/configuration/overview#generating-a-cookie-secret
+            - name: OAUTH2_PROXY_COOKIE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: oauth2-proxy-secrets
+                  key: cookie.secret
+            # 允許使用服務的 GitHub User ID，多組使用半形逗點分隔
+            - name: OAUTH2_PROXY_GITHUB_USERS
+              valueFrom:
+                secretKeyRef:
+                  name: oauth2-proxy-secrets
+                  key: codeServer.allowUserId
+            # 將 Ingress 的 Path Prefix 帶進來
+            # 設定這個的原因在於 CSS 等樣式檔的正常取得
+            # 若未使用 Ingress Path Prefix，請將這個區塊整個移除或註解掉
+            - name: PROXY_PREFIX
+              valueFrom:
+                configMapKeyRef:
+                  name: oauth2-proxy-configs
+                  key: oauth2Proxy.proxyPrefix
+          ports:
+            - protocol: TCP
+              # 建議 container 暴露的連接埠流預設就好
+              containerPort: 4180
+
+---
+# oauth2-proxy-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: oauth2-proxy
+  # 命名空間確定後，以下所列的元件都需部署在相同的命名空間中
+  # Deployment、ConfigMap、Secret、Service 與 Ingress
+  namespace: kube-system
+spec:
+  type: ClusterIP
+  selector:
+    app_name: oauth2-proxy
+  ports:
+    # 若不想使用 4180 作為對外暴露的連接埠埠號
+    # 請修改 port 值，targetPort 值請與 containerPort 設為相同值
+    - port: 4180
+      protocol: TCP
+      targetPort: 4180

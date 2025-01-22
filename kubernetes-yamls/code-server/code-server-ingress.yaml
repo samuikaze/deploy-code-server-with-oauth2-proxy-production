@@ -1,0 +1,84 @@
+# code-server-ingress.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: code-server-ingress
+  # 命名空間確定後，以下所列的元件都需部署在相同的命名空間中
+  # Deployment、ConfigMap、Secret、Service 與 Ingress
+  namespace: devtools
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    # 若是使用 Path Prefix，這邊可以帶這個 Header 給後端服務
+    # 也就是帶這個 Header 給 code-server
+    # 此值請與下面的 Prefix Path 設定相同 Path (不包含正規表達式)
+    nginx.ingress.kubernetes.io/x-forwarded-prefix: "/path/to/code-server"
+    nginx.ingress.kubernetes.io/body-size: "102400m"
+    nginx.ingress.kubernetes.io/proxy-body-size: "102400m"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "7200"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "7200"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "7200"
+    nginx.ingress.kubernetes.io/proxy-max-temp-file-size: "0"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy_max_temp_file_size: "102400m"
+    nginx.ingress.kubernetes.io/large-client-header-buffers: "8 52m"
+    nginx.ingress.kubernetes.io/client-header-buffer-size: "52m"
+    nginx.ingress.kubernetes.io/client-body-buffer-size: "102400m"
+    nginx.ingress.kubernetes.io/client-max-body-size: "102400m"
+    nginx.ingress.kubernetes.io/client_body_timeout: "7200"
+    # 當流量被導進後端服務後，這個流量要重寫的路徑
+    # 其中 $2 指的是路徑設定中正規表達式 (.*) 所取到的值
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+    # 在 nginx-ingress 中 configuration-snippet 預設為停用
+    # 這邊也不建議啟用，目前已知官方提供的這段程式碼無法正常執行，因此這邊單純留著讓大家知道
+    # nginx-ingress 也可以透過這種方式覆寫其設定檔
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      proxy_set_header 'X-Forwarded-Uri' $request_uri;
+      auth_request_set $name_upstream_1 $upstream_cookie_name_1;
+
+      access_by_lua_block {
+        if ngx.var.name_upstream_1 ~= "" then
+          ngx.header["Set-Cookie"] = "name_1=" .. ngx.var.name_upstream_1 .. ngx.var.auth_cookie:match("(; .*)")
+        end
+      }
+    # 設定 nginx 在認證使用者是否有效時要使用的 Header 名稱
+    nginx.ingress.kubernetes.io/auth-response-headers: Authorization
+    # 設定當使用者為認證時要轉導的登入頁面網址
+    nginx.ingress.kubernetes.io/auth-signin: https://$host/path/to/oauth2-proxy/oauth2/start?rd=$escaped_request_uri
+    # 設定驗證使用者是否正確認證的驗證網址
+    nginx.ingress.kubernetes.io/auth-url: https://$host/path/to/oauth2-proxy/oauth2/auth
+    nginx.org/client-max-body-size: "102400m"
+    nginx.org/proxy-read-timeout: "7200"
+    nginx.org/websocket-services: core-service
+spec:
+  tls:
+    - hosts:
+      # 支援 TLS 憑證的網域
+      - www.example.com
+      # 代入 TLS 憑證的 Secret 名稱
+      # 請注意，TLS 憑證的 Secret 必須部署在與 Ingress 鄉同的命名空間
+      # 否則將無法正常讀取
+      # 另外這張憑證對應到的網域也必須要正確
+      secretName: example-tls-secret
+  ingressClassName: nginx
+  rules:
+    # 請指定一個上面 `spec.tls.hosts` 中列出的 Host name
+    # 不管使用此服務的裝置為何，透過 HTTPS 協定使用 OAuth2 流程來認證使用者是一般常識
+    - host: www.example.com
+      http:
+        paths:
+          # 設定要連到 code-server 的 Path Prefix
+          # 當然也可以透過子網域來提供服務，這邊的 Path Prefix 就可以設定為 /
+          # 實務上使用子網域來提供服務可以省去很多不必要的麻煩，包含前面設定的 rewrite-target、
+          # x-forwarded-prefix 等等都可以省略掉
+          - path: /path/to/code-server(/|$)(.*)
+            pathType: Prefix
+            backend:
+              service:
+                # 將流量導到指定的 Service 名稱上
+                # 當然這個 Service 也要部署在與 Ingress 相同的命名空間中
+                name: code-server
+                port:
+                  # 轉導到該 Service 的連接埠埠號
+                  number: 8080

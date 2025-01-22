@@ -1,0 +1,33 @@
+# code-server-pv.yaml
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: code-server-pv
+spec:
+  capacity:
+    # 若會放置大型檔案，請依實際需求調整此大小
+    storage: 100Gi
+  hostPath:
+    # 將路徑修改為實際存放 code-server 相關資料的路徑
+    # 請注意，透過 code-server 開發的相關專案檔案也會放在這個路徑中
+    path: /path/to/your/pv/directory
+  accessModes:
+    - ReadWriteMany
+
+---
+# code-server-pvc.yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: code-server-pvc
+  # 命名空間確定後，以下所列的元件都需部署在相同的命名空間中
+  # Deployment、ConfigMap、Secret、Service 與 Ingress
+  namespace: devtools
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      # 若會放置大型檔案，請依實際需求調整此大小
+      storage: 100Gi
+  volumeName: code-server-pv

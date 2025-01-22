@@ -1,0 +1,82 @@
+# code-server-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: code-server
+  # 命名空間確定後，以下所列的元件都需部署在相同的命名空間中
+  # Deployment、ConfigMap、Secret、Service 與 Ingress
+  namespace: devtools
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: code-server
+      app.kubernetes.io/name: code-server
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: code-server
+        app.kubernetes.io/name: code-server
+    spec:
+      containers:
+        - name: code-server
+          # 若需要升級 oauth2-proxy，針對 Deployment 重新部署即可
+          image: codercom/code-server:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            # 由於已經透過 oauth2-proxy 保護服務，
+            # 因此停用內建認證
+            - --auth=none
+            # 停用遙測資料，若有監控需求，請將此選項設為 false
+            - --disable-telemetry=true
+            # 停用更新檢查，建議透過重新部署的方式進行升級
+            - --disable-update-check=true
+          env:
+            # 設定 code-server 使用延伸模組的位址
+            # 會需要設定這個的原因是因為 Microsoft Store 只支援其自家產品
+            # 第三方產品只能使用第三方的延伸模組來源
+            - name: EXTENSIONS_GALLERY
+              valueFrom:
+                configMapKeyRef:
+                  name: code-server-configs
+                  key: codeServer.extensionsGallery
+          ports:
+            - name: http
+              # 建議 container 暴露的連接埠流預設就好
+              containerPort: 8080
+          livenessProbe:
+            httpGet:
+              port: http
+              path: /
+          readinessProbe:
+            httpGet:
+              port: http
+              path: /
+          volumeMounts:
+            - mountPath: /home/coder
+              name: code-pv
+              readOnly: false
+      volumes:
+        - name: code-pv
+          persistentVolumeClaim:
+            claimName: code-server-pvc
+
+---
+# code-server-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: code-server
+  # 命名空間確定後，以下所列的元件都需部署在相同的命名空間中
+  # Deployment、ConfigMap、Secret、Service 與 Ingress
+  namespace: devtools
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/instance: code-server
+    app.kubernetes.io/name: code-server
+  ports:
+    # 若希望使用不同的連接埠暴露服務，請調整 port 的值
+    - port: 8080
+      protocol: TCP
+      targetPort: 8080
+
